@@ -12,6 +12,7 @@ upon the paths your feed it (or expose through the LAUNCHPAD_PLUGIN_PATHS
 variable).
 """
 import os
+import sys
 import factories
 
 
@@ -49,7 +50,13 @@ class LaunchPad(factories.Factory):
 
         # -- Add any paths defined in the environment
         if LAUNCHPAD_PLUGIN_ENVVAR in os.environ:
-            paths.extend(os.environ[LAUNCHPAD_PLUGIN_ENVVAR].split(';'))
+            paths.extend(
+                [
+                    os.path.abspath(path)
+                    for path in os.environ[LAUNCHPAD_PLUGIN_ENVVAR].split(';')
+                    if path.strip()
+                ]
+            )
 
         # -- Initiate the factory
         super(LaunchPad, self).__init__(
@@ -69,12 +76,23 @@ class LaunchPad(factories.Factory):
         """
         filtered_actions = list()
 
-        for action_name in super(LaunchPad, self).identifiers():
+        for action_name in sorted(super(LaunchPad, self).identifiers(), key=lambda t: t.lower()):
             action = self.request(action_name)
-            if action.viability() != LaunchAction.INVALID:
-                filtered_actions.append(action_name)
 
-        return filtered_actions
+            if action.viability() != LaunchAction.INVALID:
+                filtered_actions.append(
+                    [
+                        action_name,
+                        action.Priority,
+                    ],
+                )
+
+        final_results = list()
+
+        for action, _ in sorted(filtered_actions, key=lambda t: t[1], reverse=True):
+            final_results.append(action)
+
+        return final_results
 
     # --------------------------------------------------------------------------
     def grouped_identifiers(self):
@@ -84,7 +102,7 @@ class LaunchPad(factories.Factory):
 
         :return: dict(group_name: [name, name, name]
         """
-        data = dict()
+        data = {'Uncategorised': list()}
 
         for action in self.plugins():
 
@@ -92,11 +110,15 @@ class LaunchPad(factories.Factory):
             if action.viability() == LaunchAction.INVALID:
                 continue
 
-            for group in action.Groups:
-                if group not in data:
-                    data[group] = list()
+            if action.Groups:
+                for group in action.Groups:
+                    if group not in data:
+                        data[group] = list()
 
-                data[group].append(action.Name)
+                    data[group].append(action.Name)
+
+            else:
+                data['Uncategorised'].append(action.Name)
 
         return data
 
@@ -116,6 +138,7 @@ class LaunchAction(object):
     # -- This allows you to re-implement the same plugin multiple
     # -- times and always get the highest priority plugin
     Version = 0
+    Priority = 0
 
     # -- This is an enum of validity, which you should not
     # -- change, but one of these should be returned by the
@@ -123,6 +146,8 @@ class LaunchAction(object):
     INVALID = 0
     DISABLED = 1
     VALID = 2
+
+    STATUS_DELAY = 0
 
     # --------------------------------------------------------------------------
     @classmethod
@@ -152,6 +177,22 @@ class LaunchAction(object):
         """
         return dict()
 
+    # --------------------------------------------------------------------------
     @classmethod
     def viability(cls):
         return cls.VALID
+
+    # --------------------------------------------------------------------------
+    @classmethod
+    def status(cls):
+        """
+        This allows for important information to be passed up. Examples may be
+        when a user is expected to update a tool etc.
+
+        Returning None means the status is normal, any other value will be passed
+        up to the user in whichever way is relevant for the view, therefore in most
+        cases this should be a string if the status is anything other than normal.
+
+        :return:
+        """
+        return None
