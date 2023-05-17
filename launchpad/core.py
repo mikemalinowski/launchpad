@@ -97,15 +97,16 @@ class LaunchPad(factories.Factory):
         """
         data = {'Uncategorised': list()}
 
-        for action in self.plugins():
+        for identifier in self.identifiers(show_beta=show_beta):
 
+            action = self.request(identifier)
             action_state = action.state()
 
             if not show_beta and c.PluginStates.BETA in action_state:
                 continue
 
             # -- Ignore invalid actions
-            if action.state() != c.PluginStates.INVALID:
+            if c.PluginStates.INVALID in action.state():
                 continue
 
             if action.Groups:
