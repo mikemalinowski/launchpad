@@ -12,31 +12,21 @@ upon the paths your feed it (or expose through the LAUNCHPAD_PLUGIN_PATHS
 variable).
 """
 import os
-import sys
+import typing
 import factories
 
-
-# -- Define the environment variable we will use when looking
-# -- for plugin paths
-LAUNCHPAD_PLUGIN_ENVVAR = 'LAUNCHPAD_PLUGIN_PATHS'
-
-# -- This is a default location we always look in for user placed
-# -- actions
-LAUNCHPAD_USER_PLUGIN_DIR = os.path.join(
-    os.path.expanduser('~'),
-    '.launchpad',
-)
+from . import constants as c
 
 
 # ------------------------------------------------------------------------------
 class LaunchPad(factories.Factory):
 
     # --------------------------------------------------------------------------
-    def __init__(self, plugin_locations=None):
+    def __init__(self, plugin_locations: typing.List[str] = None):
 
         # -- Define the variable we will use to pass all our
         # -- plugin paths to
-        paths = [LAUNCHPAD_USER_PLUGIN_DIR]
+        paths = [c.LAUNCHPAD_USER_PLUGIN_DIR]
 
         # -- Add any user defined plugin locations
         if plugin_locations:
@@ -49,11 +39,11 @@ class LaunchPad(factories.Factory):
             paths.extend(plugin_locations)
 
         # -- Add any paths defined in the environment
-        if LAUNCHPAD_PLUGIN_ENVVAR in os.environ:
+        if c.LAUNCHPAD_PLUGIN_ENVVAR in os.environ:
             paths.extend(
                 [
                     os.path.abspath(path)
-                    for path in os.environ[LAUNCHPAD_PLUGIN_ENVVAR].split(';')
+                    for path in os.environ[c.LAUNCHPAD_PLUGIN_ENVVAR].split(';')
                     if path.strip()
                 ]
             )
@@ -67,7 +57,7 @@ class LaunchPad(factories.Factory):
         )
 
     # --------------------------------------------------------------------------
-    def identifiers(self):
+    def identifiers(self, show_beta=False) -> typing.List[str]:
         """
         We overload this function because we want to omit any invalid
         actions
@@ -75,27 +65,30 @@ class LaunchPad(factories.Factory):
         :return: list(str, str, ...)
         """
         filtered_actions = list()
+        all_actions = sorted(
+            super(
+                LaunchPad,
+                self,
+            ).identifiers(),
+            key=lambda t: t.lower(),
+        )
 
-        for action_name in sorted(super(LaunchPad, self).identifiers(), key=lambda t: t.lower()):
+        for action_name in all_actions:
             action = self.request(action_name)
+            action_state = action.state()
 
-            if action.viability() != LaunchAction.INVALID:
-                filtered_actions.append(
-                    [
-                        action_name,
-                        action.Priority,
-                    ],
-                )
+            if not show_beta and c.PluginStates.BETA in action_state:
+                continue
 
-        final_results = list()
+            if action.state() == c.PluginStates.INVALID:
+                continue
 
-        for action, _ in sorted(filtered_actions, key=lambda t: t[1], reverse=True):
-            final_results.append(action)
+            filtered_actions.append(action_name)
 
-        return final_results
+        return filtered_actions
 
     # --------------------------------------------------------------------------
-    def grouped_identifiers(self):
+    def grouped_identifiers(self, show_beta=False) -> typing.Dict[str, str]:
         """
         This will create a dictionary of groups, where the keys are the groups
         defined in the actions and the values are lists of identifiers.
@@ -106,8 +99,13 @@ class LaunchPad(factories.Factory):
 
         for action in self.plugins():
 
+            action_state = action.state()
+
+            if not show_beta and c.PluginStates.BETA in action_state:
+                continue
+
             # -- Ignore invalid actions
-            if action.viability() == LaunchAction.INVALID:
+            if action.state() != c.PluginStates.INVALID:
                 continue
 
             if action.Groups:
@@ -138,20 +136,17 @@ class LaunchAction(object):
     # -- This allows you to re-implement the same plugin multiple
     # -- times and always get the highest priority plugin
     Version = 0
-    Priority = 0
 
-    # -- This is an enum of validity, which you should not
-    # -- change, but one of these should be returned by the
-    # -- viability method
-    INVALID = 0
-    DISABLED = 1
-    VALID = 2
-
+    # -- This property allows a plugin to override how often the status
+    # -- should be pinged. This is additive on top of the value defined
+    # -- by the user in the settings. For instance, if hte user has a
+    # -- status wait time of five seconds, and this is set to 1000 then this
+    # -- plugin would be checked every six seconds.
     STATUS_DELAY = 0
 
     # --------------------------------------------------------------------------
     @classmethod
-    def run(cls):
+    def run(cls) -> bool:
         """
         This is used to initiate the default action for this plugin.
         """
@@ -159,7 +154,7 @@ class LaunchAction(object):
 
     # --------------------------------------------------------------------------
     @classmethod
-    def actions(cls):
+    def actions(cls) -> typing.Dict[str, callable]:
         """
         This can return a dictionary of sub-actions for this plugin. The
         format of the dictionary is expected to be dict(label=callable)
@@ -168,23 +163,12 @@ class LaunchAction(object):
 
     # --------------------------------------------------------------------------
     @classmethod
-    def properties(cls):
-        """
-        This allows plugins to utilise blind property data which may be
-        utilised by different interfaces for your specific needs.
-
-        This should return a dictionary of the form dict(prop_name=prop_value)
-        """
-        return dict()
+    def state(cls) -> "launchpad.PluginStates":
+        return c.PluginStates.VALID
 
     # --------------------------------------------------------------------------
     @classmethod
-    def viability(cls):
-        return cls.VALID
-
-    # --------------------------------------------------------------------------
-    @classmethod
-    def status(cls):
+    def status_message(cls) -> str or None:
         """
         This allows for important information to be passed up. Examples may be
         when a user is expected to update a tool etc.
